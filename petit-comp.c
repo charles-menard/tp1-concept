@@ -297,7 +297,6 @@ node *statement()
         x->o1 = term();
         next_sym();
         x->o2 = statement();
-
       }
       else {
       x = new_node(EXPR);
@@ -374,7 +373,7 @@ void c(node *x)
     case PRINT : c(x->o1);
                 gi(IPRINT); break;
     
-    case GOTOID    : gi(GOTO); fix((char*) &(x->o1->val),here); break;
+    case GOTOID    : gi(GOTO); fix(here++, &object[x->o1->val]); break;
 
       case ASSIGN: c(x->o2);
                    gi(DUP);
@@ -394,9 +393,9 @@ void c(node *x)
                      c(x->o3); fix(p2,here); break;
                    }
 
-      case ETQ   : gi(BIPUSH); g((*here+4));
+      case ETQ   : gi(BIPUSH); g((int) (here-object)+2);
                    gi(ISTORE); g(x->o1->val);
-		   c(x->o1); break;
+            		   c(x->o2); break;
                    
       case WHILE : { code *p1 = here, *p2;
                      c(x->o1);
@@ -433,7 +432,6 @@ void run()
 {
   int stack[1000], *sp = stack; /* overflow? */
   code *pc = object;
-
   for (;;)
     switch (*pc++)
       {
@@ -449,6 +447,7 @@ void run()
         case IFEQ  : if (*--sp==0) pc += *pc; else pc++; break;
         case IFNE  : if (*--sp!=0) pc += *pc; else pc++; break;
         case IFLT  : if (*--sp< 0) pc += *pc; else pc++; break;
+        case IFLE  : if (*--sp<= 0) pc += *pc; else pc++; break;
         case IPRINT: printf("%d\n",*--sp);                        break;
         case RETURN: return;
     }
