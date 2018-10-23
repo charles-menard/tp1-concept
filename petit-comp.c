@@ -13,7 +13,7 @@
 
 
 enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, LBRA, RBRA, LPAR, RPAR, PLUS,
-       MINUS, MULTIPLY, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, EOI };
+       MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, EOI };
 
 char *words[] = { "do", "else", "if", "while","print", "goto", NULL };
 
@@ -37,6 +37,8 @@ void next_sym()
       case '+': sym = PLUS;  next_ch(); break;
       case '-': sym = MINUS; next_ch(); break;
       case '*': sym = MULTIPLY; next_ch(); break;
+      case '/': sym = DIVIDE; next_ch(); break;
+      case '%': sym = MODULO; next_ch(); break;
       case ':': sym = COLON; next_ch(); break;
       case ';': sym = SEMI;  next_ch(); break;
       case '=': sym = EQUAL; next_ch(); break;
@@ -83,7 +85,7 @@ void next_sym()
                 if (id_name[1] == '\0') sym = ID; else syntax_error();
               }
           }
-        else {printf("t");syntax_error();}
+        else syntax_error();
     }
 }
 
@@ -91,7 +93,7 @@ void next_sym()
 
 /* Analyseur syntaxique. */
 
-enum { VAR, CST, ADD, SUB, MULT, LT, LEQ, ASSIGN, PRINT, GOTOID,
+enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT, GOTOID,
        IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG };
 
 struct node
@@ -135,15 +137,24 @@ node *term() /* <term> ::= <id> | <int> | <paren_expr> */
 
   return x;
 }
+
 node *mult() /* <mult> ::= <term>|<mult>"*"<term> */
 {
   node *x = term();
-  while (sym == MULTIPLY) 
+  while (sym == MULTIPLY || sym == DIVIDE || sym == MODULO) 
   {
     node *t = x;
     if (sym == MULTIPLY) 
     {
       x = new_node(MULT);
+    } 
+    else if (sym == DIVIDE)
+    {
+      x = new_node(DIV);
+    }
+    else if (sym == MODULO)
+    {
+      x = new_node(MOD);
     }
     next_sym();
     x->o1 = t;
@@ -301,7 +312,7 @@ node *statement()
       else {
       x = new_node(EXPR);
       x->o1 = expr();
-      if (sym == SEMI) next_sym(); else {printf("296");syntax_error();}
+      if (sym == SEMI) next_sym(); else syntax_error();
       }
     }
 
@@ -321,8 +332,8 @@ node *program()  /* <program> ::= <stat> */
 
 /* Generateur de code. */
 
-enum { ILOAD, ISTORE, BIPUSH, DUP, POP, IADD, ISUB, IMULT,
-       GOTO, IFEQ, IFNE, IFLT, IFLE, IPRINT, RETURN };
+enum { ILOAD, ISTORE, BIPUSH, DUP, POP, IADD, ISUB, IMULT, IDIV,
+       IMOD, GOTO, IFEQ, IFNE, IFLT, IFLE, IPRINT, RETURN };
 
 typedef signed char code;
 
@@ -353,6 +364,10 @@ void c(node *x)
     case SUB   : c(x->o1); c(x->o2); gi(ISUB); break;
     
     case MULT  : c(x->o1); c(x->o2); gi(IMULT); break;
+    
+    case DIV  : c(x->o1); c(x->o2); gi(IDIV); break;
+    
+    case MOD  : c(x->o1); c(x->o2); gi(IMOD); break;
 
     case LT    : gi(BIPUSH); g(1);
                 c(x->o1);
@@ -443,12 +458,14 @@ void run()
         case IADD  : sp[-2] = sp[-2] + sp[-1]; --sp;     break;
         case ISUB  : sp[-2] = sp[-2] - sp[-1]; --sp;     break;
         case IMULT : sp[-2] = sp[-2] * sp[-1]; --sp;     break;
+        case IDIV : sp[-2] = sp[-2] / sp[-1]; --sp;      break;
+        case IMOD : sp[-2] = sp[-2] % sp[-1]; --sp;      break;
         case GOTO  : pc += *pc;                          break;
         case IFEQ  : if (*--sp==0) pc += *pc; else pc++; break;
         case IFNE  : if (*--sp!=0) pc += *pc; else pc++; break;
         case IFLT  : if (*--sp< 0) pc += *pc; else pc++; break;
-        case IFLE  : if (*--sp<= 0) pc += *pc; else pc++; break;
-        case IPRINT: printf("%d\n",*--sp);                        break;
+        case IFLE  : if (*--sp<= 0) pc += *pc; else pc++;break;
+        case IPRINT: printf("%d\n",*--sp);               break;
         case RETURN: return;
     }
 }
@@ -457,7 +474,7 @@ void run()
 
 /* Programme principal. */
 
-int main()
+int main(char * args)
 {
   int i;
 
