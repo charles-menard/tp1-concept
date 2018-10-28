@@ -12,16 +12,16 @@
 /* Analyseur lexical. */
 
 
-enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, LBRA, RBRA, LPAR, RPAR, PLUS,
-       MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, EOI };
+enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, CONTINUE, LBRA, RBRA, LPAR, RPAR, PLUS,
+       MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, NOT_EQ, EOI,
+       DOUBLE_EQUAL, MORE, MORE_EQUAL};
 
-char *words[] = { "do", "else", "if", "while","print", "goto", NULL };
+char *words[] = { "do", "else", "if", "while","print", "goto", "continue",  NULL };
 
 int ch = ' ';
 int sym;
 int int_val;
 char id_name[100];
-
 void syntax_error() { fprintf(stderr, "syntax error\n"); exit(1); }
 
 void next_ch() { ch = getchar(); }
@@ -41,7 +41,7 @@ void next_sym()
       case '%': sym = MODULO; next_ch(); break;
       case ':': sym = COLON; next_ch(); break;
       case ';': sym = SEMI;  next_ch(); break;
-      case '=': sym = EQUAL; next_ch(); break;
+
       case EOF: sym = EOI;   next_ch(); break;
       default:
         if (ch >= '0' && ch <= '9')
@@ -56,14 +56,46 @@ void next_sym()
       
             sym = INT;
           }
+	else if (ch == '='){
+	  sym = EQUAL;
+	  next_ch();
+	  if (ch == '='){
+	    sym = DOUBLE_EQUAL;
+	    next_ch();
+	  }
+
+	}
+	else if (ch == '>'){
+	  sym = MORE;
+	  next_ch();
+	  if(ch == '='){
+	    sym = MORE_EQUAL;
+	    next_ch();
+	  }
+
+	}
         else if (ch == '<') {
             sym = LESS;
             next_ch();
+	   
             if (ch == '=') {
                 sym = LESS_EQ;
                 next_ch();
+		
             }
         }
+	else if (ch == '!')
+	  {
+	    next_ch();
+
+	    if (ch == '='){
+	      sym = NOT_EQ;
+	      next_ch();
+
+	    }else {
+	      syntax_error();
+	    }
+	  }
         else if (ch >= 'a' && ch <= 'z')
           {
             int i = 0; /* overflow? */
@@ -84,6 +116,7 @@ void next_sym()
               {
                 if (id_name[1] == '\0') sym = ID; else syntax_error();
               }
+	    
           }
         else syntax_error();
     }
@@ -94,7 +127,8 @@ void next_sym()
 /* Analyseur syntaxique. */
 
 enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT, GOTOID,
-       IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG };
+       IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG, NEQ, DOUBLE_EQ, GREATER,
+       GEQ, CONTINUE_NODE};
 
 struct node
   {
@@ -199,6 +233,40 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
       next_sym();
       x->o1 = t;
       x->o2 = sum();
+  }else if(sym == NOT_EQ){
+
+    node *t = x;
+    x = new_node(NEQ);
+    next_sym();
+    x->o1 = t;
+    x->o2 = sum();
+
+  }else if(sym == DOUBLE_EQUAL){
+
+    node *t = x;
+    x = new_node(DOUBLE_EQ);
+    next_sym();
+    x->o1 = t;
+    x->o2 = sum();
+
+  }else if (sym == MORE){
+    
+    node *t = x;
+    x = new_node(GREATER);
+    next_sym();
+    x->o1 = t;
+    x->o2 = sum();
+
+
+  }else if (sym == MORE_EQUAL){
+    
+    node *t = x;
+    x = new_node(GEQ);
+    next_sym();
+    x->o1 = t;
+    x->o2 = sum();
+
+
   }
 
   return x;
@@ -215,6 +283,7 @@ node *expr() /* <expr> ::= <test> | <id> "=" <expr> */
     {
       node *t = x;
       x = new_node(ASSIGN);
+
       next_sym();
       x->o1 = t;
       x->o2 = expr();
@@ -301,6 +370,19 @@ node *statement()
         }
       next_sym();
     }
+  else if (sym == CONTINUE){ /* continue [ <id> ] */
+
+    x = new_node(CONTINUE_NODE);
+    next_sym();
+    if (sym == ID){
+      x = new_node(GOTOID);
+       x->o1 = term();
+      if (x->o1->kind != VAR) syntax_error();
+      if (sym == SEMI) next_sym(); else syntax_error();
+
+    }
+
+  }
   else                     /* <expr> ";" */
     {
       if (sym == ID && ch == ':') {
@@ -338,6 +420,7 @@ enum { ILOAD, ISTORE, BIPUSH, DUP, POP, IADD, ISUB, IMULT, IDIV,
 typedef signed char code;
 
 code object[1000], *here = object;
+code* label[26];
 
 void gen(code c) { *here++ = c; } /* overflow? */
 
@@ -385,10 +468,41 @@ void c(node *x)
                 gi(POP);
                 gi(BIPUSH); g(0); break;
 
+    case NEQ : gi(BIPUSH); g(0);
+      c(x->o1);
+      c(x->o2);
+      gi(ISUB);
+      gi(IFEQ); g(4);
+      gi(POP);
+      gi(BIPUSH); g(1); break;
+    case DOUBLE_EQ: gi(BIPUSH); g(1);
+      c(x->o1);
+      c(x->o2);
+      gi(ISUB);
+      gi(IFEQ); g(4);
+      gi(POP);
+      gi(BIPUSH); g(0); break;
+      
+    case GREATER : gi(BIPUSH); g(0);
+      c(x->o1);
+      c(x->o2);
+      gi(ISUB);
+      gi(IFLE); g(4);
+      gi(POP);
+      gi(BIPUSH); g(1); break;
+      
+    case GEQ :  gi(BIPUSH); g(0);
+      c(x->o1);
+      c(x->o2);
+      gi(ISUB);
+      gi(IFLT); g(4);
+      gi(POP);
+      gi(BIPUSH); g(1); break;
+
     case PRINT : c(x->o1);
                 gi(IPRINT); break;
     
-    case GOTOID    : gi(GOTO); fix(here++, &object[x->o1->val]); break;
+    case GOTOID    : gi(GOTO); fix(here++, label[x->o1->val]); break;
 
       case ASSIGN: c(x->o2);
                    gi(DUP);
@@ -408,8 +522,7 @@ void c(node *x)
                      c(x->o3); fix(p2,here); break;
                    }
 
-      case ETQ   : gi(BIPUSH); g((int) (here-object)+2);
-                   gi(ISTORE); g(x->o1->val);
+      case ETQ   : label[x->o1->val] = here;
             		   c(x->o2); break;
                    
       case WHILE : { code *p1 = here, *p2;
