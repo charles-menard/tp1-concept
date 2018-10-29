@@ -14,11 +14,11 @@
 
 jmp_buf env;
 
-enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, CONTINUE, LBRA, RBRA, LPAR, RPAR, PLUS,
-       MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, NOT_EQ, EOI,
-       DOUBLE_EQUAL, MORE, MORE_EQUAL};
+enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, CONTINUE, BREAK_SYM, LBRA, RBRA, LPAR, 
+       RPAR, PLUS, MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, 
+       EQUAL, INT, ID, NOT_EQ, EOI, DOUBLE_EQUAL, MORE, MORE_EQUAL};
 
-char *words[] = { "do", "else", "if", "while","print", "goto", "continue",  NULL };
+char *words[] = { "do", "else", "if", "while","print", "goto", "continue", "break",  NULL };
 
 int ch = ' ';
 int sym;
@@ -132,7 +132,7 @@ void next_sym()
 
 enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT, GOTOID,
        IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG, NEQ, DOUBLE_EQ, GREATER,
-       GEQ, CONTINUE_NODE};
+       GEQ, CONTINUE_ID, CONTINUE_NOID, BREAK_ID, BREAK_NOID };
 
 struct node
   {
@@ -776,9 +776,9 @@ node *statement()
         next_sym();
       }
     }
-  else if (sym == CONTINUE) /* continue [ <id> ] */
+  else if (sym == CONTINUE) /* continue [ <id> ] ; */
     {
-      x = new_node(CONTINUE_NODE);
+      x = new_node(CONTINUE_NOID);
       if (x != NULL) {
       
         int r = setjmp(env);
@@ -789,7 +789,7 @@ node *statement()
         next_sym();
 
         if (sym == ID){
-          x->kind = GOTOID;
+          x->kind = CONTINUE_ID;
           
           x->o1 = term();
           if (x->o2 == NULL) {
@@ -802,13 +802,49 @@ node *statement()
             closeASA(x);
             return NULL;
           }
-          if (sym == SEMI) next_sym(); 
-          else {
-            printf("Missing semi-colon after goto.\n");
+
+        }
+	      if (sym == SEMI) next_sym(); 
+        else {
+          printf("Missing semi-colon after continue.\n");
+          closeASA(x);
+          return NULL;
+        }
+      }
+    }
+   else if (sym == BREAK_SYM) /* break [ <id> ] ; */
+    {
+      x = new_node(BREAK_NOID);
+      if (x != NULL) {
+      
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+
+        if (sym == ID){
+          x->kind = BREAK_ID;
+          
+          x->o1 = term();
+          if (x->o2 == NULL) {
+            closeASA(x);
+            return NULL;
+          }
+          
+          if (x->o1->kind != VAR) {
+            printf("Invalid label in break <Label>;.\n");
             closeASA(x);
             return NULL;
           }
 
+        }
+	      if (sym == SEMI) next_sym(); 
+        else {
+          printf("Missing semi-colon after break.\n");
+          closeASA(x);
+          return NULL;
         }
       }
     }
@@ -898,6 +934,8 @@ enum { ILOAD, ISTORE, BIPUSH, DUP, POP, IADD, ISUB, IMULT, IDIV,
 typedef signed char code;
 
 code object[1000], *here = object;
+code *continueno[1000], **topcontinueno = continueno;
+code *breakno[1000], **topbreakno = breakno;
 
 void gen(code c) { 
   *here++ = c;
@@ -917,15 +955,30 @@ void gen(code c) {
 void fix(code *src, code *dst) { 
   code temp = *src;
   *src = dst-src;
-  if ((*src <= 0 && temp < 0 && dst > 0) ||
-      (*src >= 0 && temp > 0 && dst < 0)) {
+  if ((*src <= 0 && temp < 0 && *dst > 0) ||
+      (*src >= 0 && temp > 0 && *dst < 0)) {
     printf("Invalid jump in code : the jump is too long.\n");
     longjmp(env, 1);
   }
 }
 
+/* fix les jump de continue entre topcontinueno et start vers to*/
+void fixContinueNoId(code **start, code *to) {
+  while(start - (code**)&continueno <
+        topcontinueno - (code**)&continueno) {
+      fix(*--topcontinueno, to);
+  }
+}
+/* fix les jump de continue entre topcontinueno et start vers to*/
+void fixBreakNoId(code **start, code *to) {
+  while(start - (code**)&breakno <
+        topbreakno - (code**)&breakno) {
+      fix(*--topbreakno, to);
+  }
+}
+
 void c(node *x)
-{ 
+{
   if (x->kind == PROG) {
     int r = setjmp(env);
     if (r != 0) {
@@ -972,6 +1025,11 @@ void c(node *x)
     
     case GOTOID  : gi(GOTO); fix(here++, &object[x->o1->val]); 
                    free(x->o1); break;
+    
+    case CONTINUE_NOID  : gi(GOTO); 
+                          *topcontinueno++ = here++; break;
+    case BREAK_NOID  : gi(GOTO); 
+                          *topbreakno++ = here++; break;
 
       case ASSIGN: c(x->o2);
                    gi(DUP);
@@ -997,16 +1055,24 @@ void c(node *x)
             		   c(x->o2); 
             		   free(x->o1); break;
                    
-      case WHILE : { code *p1 = here, *p2;
+      case WHILE : { code **begin = topcontinueno;
+                     code **beginBreak = topbreakno;
+                     code *p1 = here, *p2;
                      c(x->o1);
                      gi(IFEQ); p2 = here++;
                      c(x->o2);
-                     gi(GOTO); fix(here++,p1); fix(p2,here); break;
+                     fixContinueNoId(begin, p1);
+                     gi(GOTO); fix(here++,p1); fix(p2,here);
+                     fixBreakNoId(beginBreak, here); break;
                    }
 
-      case DO    : { code *p1 = here; c(x->o1);
+      case DO    : { code **begin = topcontinueno;
+                     code **beginBreak = topbreakno; 
+                     code *p1 = here; c(x->o1);
+                     fixContinueNoId(begin, here);
                      c(x->o2);
-                     gi(IFNE); fix(here++,p1); break;
+                     gi(IFNE); fix(here++,p1); 
+                     fixBreakNoId(beginBreak, here); break;
                    }
 
       case EMPTY : break;
@@ -1073,6 +1139,15 @@ int main()
   int i;
 
   c(program());
+  
+  if (topcontinueno - (code**)&continueno > 0) {
+    printf("Invalid continue not in a loop.\n");
+    exit(1);
+  }
+  if (topbreakno - (code**)&breakno > 0) {
+    printf("Invalid break not in a loop.\n");
+    exit(1);
+  }
 
 #ifdef SHOW_CODE
   printf("\n");
