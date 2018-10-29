@@ -5,24 +5,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <setjmp.h>
 
 #define SHOW_CODE 1
 /*---------------------------------------------------------------------------*/
 
 /* Analyseur lexical. */
 
+jmp_buf env;
 
-enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, CONTINUE, LBRA, RBRA, LPAR, RPAR, PLUS,
-       MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, NOT_EQ, EOI,
-       DOUBLE_EQUAL, MORE, MORE_EQUAL};
+enum { DO_SYM, ELSE_SYM, IF_SYM, WHILE_SYM, PRINT_SYM, GOTO_SYM, LBRA, RBRA, LPAR, RPAR, PLUS,
+       MINUS, MULTIPLY, DIVIDE, MODULO, LESS, LESS_EQ, SEMI, COLON, EQUAL, INT, ID, EOI };
 
-char *words[] = { "do", "else", "if", "while","print", "goto", "continue",  NULL };
+char *words[] = { "do", "else", "if", "while","print", "goto", NULL };
 
 int ch = ' ';
 int sym;
 int int_val;
 char id_name[100];
-void syntax_error() { fprintf(stderr, "syntax error\n"); exit(1); }
 
 void next_ch() { ch = getchar(); }
 
@@ -41,7 +41,7 @@ void next_sym()
       case '%': sym = MODULO; next_ch(); break;
       case ':': sym = COLON; next_ch(); break;
       case ';': sym = SEMI;  next_ch(); break;
-
+      case '=': sym = EQUAL; next_ch(); break;
       case EOF: sym = EOI;   next_ch(); break;
       default:
         if (ch >= '0' && ch <= '9')
@@ -52,56 +52,32 @@ void next_sym()
               {
                 int_val = int_val*10 + (ch - '0');
                 next_ch();
+                if (int_val < 0) {
+                  printf("Too big Integer.\n");
+                  longjmp(env, 1);
+                }
               }
       
             sym = INT;
           }
-	else if (ch == '='){
-	  sym = EQUAL;
-	  next_ch();
-	  if (ch == '='){
-	    sym = DOUBLE_EQUAL;
-	    next_ch();
-	  }
-
-	}
-	else if (ch == '>'){
-	  sym = MORE;
-	  next_ch();
-	  if(ch == '='){
-	    sym = MORE_EQUAL;
-	    next_ch();
-	  }
-
-	}
         else if (ch == '<') {
             sym = LESS;
             next_ch();
-	   
             if (ch == '=') {
                 sym = LESS_EQ;
                 next_ch();
-		
             }
         }
-	else if (ch == '!')
-	  {
-	    next_ch();
-
-	    if (ch == '='){
-	      sym = NOT_EQ;
-	      next_ch();
-
-	    }else {
-	      syntax_error();
-	    }
-	  }
         else if (ch >= 'a' && ch <= 'z')
           {
             int i = 0; /* overflow? */
       
             while ((ch >= 'a' && ch <= 'z') || ch == '_')
               {
+                if (i < 0) {
+                  printf("Too Long String.\n");
+                  longjmp(env, 1);
+                }
                 id_name[i++] = ch;
                 next_ch();
               }
@@ -114,11 +90,17 @@ void next_sym()
       
             if (words[sym] == NULL)
               {
-                if (id_name[1] == '\0') sym = ID; else syntax_error();
+                if (id_name[1] == '\0') sym = ID; 
+                else {
+                  printf("Invalid ID name.\n");
+                  longjmp(env, 1);
+                }
               }
-	    
           }
-        else syntax_error();
+        else {
+          printf("Invalid Character.\n");
+          longjmp(env, 1);
+        }
     }
 }
 
@@ -126,9 +108,8 @@ void next_sym()
 
 /* Analyseur syntaxique. */
 
-enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT, GOTOID,
-       IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG, NEQ, DOUBLE_EQ, GREATER,
-       GEQ, CONTINUE_NODE};
+enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT,
+       GOTOID, IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG };
 
 struct node
   {
@@ -141,10 +122,27 @@ struct node
 
 typedef struct node node;
 
+void closeASA(node *x) {
+  if (x != NULL) {
+    if(x->o1 != NULL) {
+      closeASA(x->o1);
+    } 
+    if(x->o2 != NULL) {
+      closeASA(x->o2);
+    } 
+    if(x->o3 != NULL) {
+      closeASA(x->o3);
+    }
+    free(x);
+  }
+}
+
 node *new_node(int k)
 {
   node *x = malloc(sizeof(node));
-  x->kind = k;
+  if (x != NULL) {
+    x->kind = k;
+  }
   return x;
 }
 
@@ -157,14 +155,30 @@ node *term() /* <term> ::= <id> | <int> | <paren_expr> */
   if (sym == ID)           /* <term> ::= <id> */
     {
       x = new_node(VAR);
-      x->val = id_name[0]-'a';
-      next_sym();
+      if (x != NULL) {
+        x->val = id_name[0]-'a';
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+      }
     }
   else if (sym == INT)     /* <term> ::= <int> */
     {
       x = new_node(CST);
-      x->val = int_val;
-      next_sym();
+      if (x != NULL) {
+        x->val = int_val;
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+      }
     }
   else                     /* <term> ::= <paren_expr> */
     x = paren_expr();
@@ -175,24 +189,44 @@ node *term() /* <term> ::= <id> | <int> | <paren_expr> */
 node *mult() /* <mult> ::= <term>|<mult>"*"<term> */
 {
   node *x = term();
-  while (sym == MULTIPLY || sym == DIVIDE || sym == MODULO) 
-  {
-    node *t = x;
-    if (sym == MULTIPLY) 
+  if (x != NULL) {
+    while (sym == MULTIPLY || sym == DIVIDE || sym == MODULO) 
     {
-      x = new_node(MULT);
-    } 
-    else if (sym == DIVIDE)
-    {
-      x = new_node(DIV);
+      node *t = x;
+      if (sym == MULTIPLY) 
+      {
+        x = new_node(MULT);
+      } 
+      else if (sym == DIVIDE)
+      {
+        x = new_node(DIV);
+      }
+      else if (sym == MODULO)
+      {
+        x = new_node(MOD);
+      }
+      if (x != NULL) {
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o1 = t;
+        
+        x->o2 = term();
+        if(x->o2 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+      }
+      else {
+        closeASA(t);
+        return NULL;
+      }
     }
-    else if (sym == MODULO)
-    {
-      x = new_node(MOD);
-    }
-    next_sym();
-    x->o1 = t;
-    x->o2 = term();
   }
   return x;
 }
@@ -202,15 +236,33 @@ node *mult() /* <mult> ::= <term>|<mult>"*"<term> */
 node *sum() /* <sum> ::= <mult>|<sum>"+"<mult>|<sum>"-"<mult> */
 {
   node *x = mult();
-
-  while (sym == PLUS || sym == MINUS)
+  if (x != NULL) {
+    while (sym == PLUS || sym == MINUS)
     {
       node *t = x;
       x = new_node(sym==PLUS ? ADD : SUB);
-      next_sym();
-      x->o1 = t;
-      x->o2 = mult();
+      if (x != NULL) {
+        x->o1 = t;
+
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o2 = mult();
+        if (x->o2 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+      }
+      else {
+        closeASA(t);
+        return NULL;
+      }
     }
+  }
 
   return x;
 }
@@ -218,55 +270,56 @@ node *sum() /* <sum> ::= <mult>|<sum>"+"<mult>|<sum>"-"<mult> */
 node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
 {
   node *x = sum();
-
-  if (sym == LESS)
+  if (x != NULL) {
+    if (sym == LESS)
     {
       node *t = x;
       x = new_node(LT);
-      next_sym();
-      x->o1 = t;
-      x->o2 = sum();
+      if (x != NULL) {
+        x->o1 = t;
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o2 = sum();
+        if (x->o2 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+      }
+      else {
+        closeASA(t);
+        return NULL;
+      }
     }
-  else if (sym == LESS_EQ) {
+    else if (sym == LESS_EQ) {
       node *t = x;
       x = new_node(LEQ);
-      next_sym();
-      x->o1 = t;
-      x->o2 = sum();
-  }else if(sym == NOT_EQ){
-
-    node *t = x;
-    x = new_node(NEQ);
-    next_sym();
-    x->o1 = t;
-    x->o2 = sum();
-
-  }else if(sym == DOUBLE_EQUAL){
-
-    node *t = x;
-    x = new_node(DOUBLE_EQ);
-    next_sym();
-    x->o1 = t;
-    x->o2 = sum();
-
-  }else if (sym == MORE){
-    
-    node *t = x;
-    x = new_node(GREATER);
-    next_sym();
-    x->o1 = t;
-    x->o2 = sum();
-
-
-  }else if (sym == MORE_EQUAL){
-    
-    node *t = x;
-    x = new_node(GEQ);
-    next_sym();
-    x->o1 = t;
-    x->o2 = sum();
-
-
+      if (x != NULL) {
+        x->o1 = t;
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o2 = sum();
+        if (x->o3 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+      }
+      else {
+        closeASA(t);
+        return NULL;
+      }
+    }
   }
 
   return x;
@@ -278,16 +331,33 @@ node *expr() /* <expr> ::= <test> | <id> "=" <expr> */
 
   if (sym != ID) return test();
   x = test();
-
-  if (sym == EQUAL)
+  if (x != NULL) {
+    if (sym == EQUAL)
     {
       node *t = x;
       x = new_node(ASSIGN);
-
-      next_sym();
-      x->o1 = t;
-      x->o2 = expr();
+      if (x != NULL) {
+        x->o1 = t;
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o2 = expr();
+        if (x->o2 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+      }
+      else {
+        closeASA(t);
+        return NULL;
+      }
     }
+  }
 
   return x;
 }
@@ -296,12 +366,35 @@ node *paren_expr() /* <paren_expr> ::= "(" <expr> ")" */
 {
   node *x;
 
-  if (sym == LPAR) next_sym(); else syntax_error();
+  if (sym == LPAR){
+    int r = setjmp(env);
+    if (r != 0) {
+      return NULL;
+    }
+    next_sym(); 
+  }
+  else {
+    printf("Missing opening parenthese in parenthese expression.\n");
+    return NULL;
+  }
 
   x = expr();
 
-  if (sym == RPAR) next_sym(); else syntax_error();
-
+  if (x != NULL){
+    if (sym == RPAR){
+      int r = setjmp(env);
+      if (r != 0) {
+        closeASA(x);
+        return NULL;
+      }
+      next_sym(); 
+    }
+    else {
+      printf("Missing closing parenthese in parenthese expression.\n");
+      closeASA(x);
+      return NULL;
+    }
+  }
   return x;
 }
 
@@ -312,89 +405,289 @@ node *statement()
   if (sym == IF_SYM)       /* "if" <paren_expr> <stat> */
     {
       x = new_node(IF1);
-      next_sym();
-      x->o1 = paren_expr();
-      x->o2 = statement();
-      if (sym == ELSE_SYM) /* ... "else" <stat> */
-        { x->kind = IF2;
-          next_sym();
-          x->o3 = statement();
+      if (x != NULL) {
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
         }
+        next_sym();
+        
+        x->o1 = paren_expr();
+        if (x->o1 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+        
+        x->o2 = statement();
+        if (x->o2 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+        
+        if (sym == ELSE_SYM) /* ... "else" <stat> */
+        { 
+          x->kind = IF2;
+          
+          int r = setjmp(env);
+          if (r != 0) {
+            closeASA(x);
+            return NULL;
+          }
+          next_sym();
+
+          x->o3 = statement();
+          if (x->o3 == NULL) {
+            closeASA(x);
+            return NULL;
+          }
+        }
+      }
     }
   else if (sym == WHILE_SYM) /* "while" <paren_expr> <stat> */
     {
       x = new_node(WHILE);
-      next_sym();
-      x->o1 = paren_expr();
-      x->o2 = statement();
+      if (x != NULL) {
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o1 = paren_expr();
+        if (x->o1 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+        
+        x->o2 = statement();
+        if (x->o1 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+      }
     }
   else if (sym == DO_SYM)  /* "do" <stat> "while" <paren_expr> ";" */
     {
       x = new_node(DO);
-      next_sym();
-      x->o1 = statement();
-      if (sym == WHILE_SYM) next_sym(); else syntax_error();
-      x->o2 = paren_expr();
-      if (sym == SEMI) next_sym(); else syntax_error();
+      if (x != NULL) {
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o1 = statement();
+        if (x->o1 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+        
+        if (sym == WHILE_SYM) {
+          int r = setjmp(env);
+          if (r != 0) {
+            closeASA(x);
+            return NULL;
+          }
+          next_sym();
+        }
+        else {
+          printf("Missing while in do while.\n");
+          closeASA(x);
+          return NULL;
+        }
+        
+        x->o2 = paren_expr();
+        if (x->o2 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+
+        if (sym == SEMI) {
+          int r = setjmp(env);
+          if (r != 0) {
+            closeASA(x);
+            return NULL;
+          }
+          next_sym();
+        }
+        else {
+          printf("Missing semi-colon in do while.\n");
+          closeASA(x);
+          return NULL;
+        }
+      }
     }
   else if (sym == PRINT_SYM) /* print <paren_expr> ";" */
     {
       x = new_node(PRINT);
-      next_sym();
-      x->o1 = paren_expr();
-      if (sym == SEMI) next_sym(); else syntax_error();
+      if (x != NULL) {
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o1 = paren_expr();
+        if (x->o1 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+        if (sym == SEMI) {
+          int r = setjmp(env);
+          if (r != 0) {
+            closeASA(x);
+            return NULL;
+          }
+          next_sym(); 
+        }
+        else {
+          printf("Missing semi-colon in print.\n");
+          closeASA(x);
+          return NULL;
+        }
+      }
     } 
-  else if (sym == GOTO_SYM) /* print <paren_expr> ";" */
+  else if (sym == GOTO_SYM) /* goto ID ";" */
     {
       x = new_node(GOTOID);
-      next_sym();
-      x->o1 = term();
-      if (x->o1->kind != VAR) syntax_error();
-      if (sym == SEMI) next_sym(); else syntax_error();
+      if (x != NULL) {
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+        
+        x->o1 = term();
+        if (x->o1 == NULL) {
+          closeASA(x);
+          return NULL;
+        }
+        if (x->o1->kind != VAR) {
+          printf("Invalid label in gtoto Label.\n");
+          closeASA(x);
+          return NULL;
+        }
+        
+        if (sym == SEMI) {
+          int r = setjmp(env);
+          if (r != 0) {
+            closeASA(x);
+            return NULL;
+          }
+          next_sym();
+        } 
+        else {
+          printf("Missing semi-colon after goto.\n");
+          closeASA(x);
+          return NULL;
+        }
+      }
     } 
   else if (sym == SEMI)    /* ";" */
     {
       x = new_node(EMPTY);
-      next_sym();
+      if (x != NULL) {
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+      }
     }
   else if (sym == LBRA)    /* "{" { <stat> } "}" */
     {
       x = new_node(EMPTY);
-      next_sym();
-      while (sym != RBRA)
-        {
-          node *t = x;
-          x = new_node(SEQ);
-          x->o1 = t;
-          x->o2 = statement();
+      if (x != NULL) {
+        
+        int r = setjmp(env);
+        if (r != 0) {
+          closeASA(x);
+          return NULL;
         }
-      next_sym();
+        next_sym();
+        
+        while (sym != RBRA)
+          {
+            node *t = x;
+            x = new_node(SEQ);
+            
+            if (x != NULL) {
+              x->o1 = t;
+              
+              x->o2 = statement();
+              if (x->o2 == NULL) {
+                closeASA(x);
+                return NULL;
+              }
+            }
+            else {
+              closeASA(t);
+              return NULL;
+            }
+        }
+        
+        int n = setjmp(env);
+        if (n != 0) {
+          closeASA(x);
+          return NULL;
+        }
+        next_sym();
+      }
     }
-  else if (sym == CONTINUE){ /* continue [ <id> ] */
-
-    x = new_node(CONTINUE_NODE);
-    next_sym();
-    if (sym == ID){
-      x = new_node(GOTOID);
-       x->o1 = term();
-      if (x->o1->kind != VAR) syntax_error();
-      if (sym == SEMI) next_sym(); else syntax_error();
-
-    }
-
-  }
   else                     /* <expr> ";" */
     {
       if (sym == ID && ch == ':') {
         x = new_node(ETQ);
-        x->o1 = term();
-        next_sym();
-        x->o2 = statement();
+        if (x != NULL) {
+          x->o1 = term();
+          if (x->o1 == NULL) {
+            closeASA(x);
+            return NULL;
+          }
+          int r = setjmp(env);
+          if (r != 0) {
+            closeASA(x);
+            return NULL;
+          }
+          next_sym();
+          
+          x->o2 = statement();
+          if (x->o2 == NULL) {
+            closeASA(x);
+            return NULL;
+          }
+        }
       }
       else {
-      x = new_node(EXPR);
-      x->o1 = expr();
-      if (sym == SEMI) next_sym(); else syntax_error();
+        x = new_node(EXPR);
+        if (x != NULL) {
+          x->o1 = expr();
+          if (x->o1 == NULL) {
+            closeASA(x);
+            return NULL;
+          }
+          
+          if (sym == SEMI) { 
+            int r = setjmp(env);
+            if (r != 0) {
+              closeASA(x);
+              return NULL;
+            }
+            next_sym(); 
+          }
+          
+          else {
+            printf("Missing semi-colon after experssion.\n");
+            closeASA(x);
+            return NULL;
+          }
+        }
       }
     }
 
@@ -404,9 +697,22 @@ node *statement()
 node *program()  /* <program> ::= <stat> */
 {
   node *x = new_node(PROG);
+  
+  int r = setjmp(env);
+  if (r != 0) {
+    closeASA(x);
+    exit(1);
+  }
+  
   next_sym();
   x->o1 = statement();
-  if (sym != EOI) syntax_error();
+  if (sym != EOI || x->o1 == NULL)  {
+    if (x->o1 != NULL) {
+      printf("Too many statement without brakets.\n");
+    }
+    closeASA(x);
+    exit(1);
+  }
   return x;
 }
 
@@ -420,9 +726,14 @@ enum { ILOAD, ISTORE, BIPUSH, DUP, POP, IADD, ISUB, IMULT, IDIV,
 typedef signed char code;
 
 code object[1000], *here = object;
-code* label[26];
 
-void gen(code c) { *here++ = c; } /* overflow? */
+void gen(code c) { 
+  *here++ = c;
+  if (here - object > 1000) {
+    printf("Programme recieved is too long.\n");
+    longjmp(env, 1);
+  }
+}
 
 #ifdef SHOW_CODE
 #define g(c) do { printf(" %d",c); gen(c); } while (0)
@@ -431,11 +742,27 @@ void gen(code c) { *here++ = c; } /* overflow? */
 #define g(c) gen(c)
 #define gi(c) gen(c)
 #endif
-
-void fix(code *src, code *dst) { *src = dst-src; } /* overflow? */
+void fix(code *src, code *dst) { 
+  code temp = *src;
+  *src = dst-src;
+  if ((*src <= 0 && temp < 0 && dst > 0) ||
+      (*src >= 0 && temp > 0 && dst < 0)) {
+    printf("Invalid jump in code : the jump is too long.\n");
+    longjmp(env, 1);
+  }
+}
 
 void c(node *x)
-{ switch (x->kind)
+{ 
+  if (x->kind == PROG) {
+    int r = setjmp(env);
+    if (r != 0) {
+      closeASA(x);
+      exit(1);
+    }
+  }
+  
+  switch (x->kind)
     { 
     case VAR   : gi(ILOAD); g(x->val); break;
 
@@ -468,45 +795,16 @@ void c(node *x)
                 gi(POP);
                 gi(BIPUSH); g(0); break;
 
-    case NEQ : gi(BIPUSH); g(0);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFEQ); g(4);
-      gi(POP);
-      gi(BIPUSH); g(1); break;
-    case DOUBLE_EQ: gi(BIPUSH); g(1);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFEQ); g(4);
-      gi(POP);
-      gi(BIPUSH); g(0); break;
-      
-    case GREATER : gi(BIPUSH); g(0);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFLE); g(4);
-      gi(POP);
-      gi(BIPUSH); g(1); break;
-      
-    case GEQ :  gi(BIPUSH); g(0);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFLT); g(4);
-      gi(POP);
-      gi(BIPUSH); g(1); break;
-
     case PRINT : c(x->o1);
                 gi(IPRINT); break;
     
-    case GOTOID    : gi(GOTO); fix(here++, label[x->o1->val]); break;
+    case GOTOID  : gi(GOTO); fix(here++, &object[x->o1->val]); 
+                   free(x->o1); break;
 
       case ASSIGN: c(x->o2);
                    gi(DUP);
-                   gi(ISTORE); g(x->o1->val); break;
+                   gi(ISTORE); g(x->o1->val); 
+                   free(x->o1); break;
 
       case IF1   : { code *p1;
                      c(x->o1);
@@ -522,8 +820,10 @@ void c(node *x)
                      c(x->o3); fix(p2,here); break;
                    }
 
-      case ETQ   : label[x->o1->val] = here;
-            		   c(x->o2); break;
+      case ETQ   : gi(BIPUSH); g((int) (here-object)+2);
+                   gi(ISTORE); g(x->o1->val);
+            		   c(x->o2); 
+            		   free(x->o1); break;
                    
       case WHILE : { code *p1 = here, *p2;
                      c(x->o1);
@@ -548,6 +848,10 @@ void c(node *x)
       case PROG  : c(x->o1);
                    gi(RETURN); break;
     }
+    if (x != NULL) {
+      free(x);
+    }
+    
 }
 
 /*---------------------------------------------------------------------------*/
@@ -560,7 +864,7 @@ void run()
 {
   int stack[1000], *sp = stack; /* overflow? */
   code *pc = object;
-  for (;;)
+  for (;;) {
     switch (*pc++)
       {
         case ILOAD : *sp++ = globals[*pc++];             break;
@@ -581,13 +885,18 @@ void run()
         case IPRINT: printf("%d\n",*--sp);               break;
         case RETURN: return;
     }
+    if (sp - stack > 1000) {
+      printf("Too many variables on the stack.\n");
+      exit(1);
+    }
+  }
 }
 
 /*---------------------------------------------------------------------------*/
 
 /* Programme principal. */
 
-int main(char * args)
+int main()
 {
   int i;
 
@@ -608,5 +917,4 @@ int main(char * args)
 
   return 0;
 }
-
 /*---------------------------------------------------------------------------*/
