@@ -133,7 +133,9 @@ void next_sym()
 enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT, GOTOID,
        IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG, NEQ, DOUBLE_EQ, GREATER,
        GEQ, CONTINUE_ID, CONTINUE_NOID, BREAK_ID, BREAK_NOID };
+char etqFlag[26]; /* met a true si la lettre est utilisee comme etq */
 
+  
 struct node
   {
     int kind;
@@ -854,10 +856,19 @@ node *statement()
         x = new_node(ETQ);
         if (x != NULL) {
           x->o1 = term();
+	  
           if (x->o1 == NULL) {
             closeASA(x);
             return NULL;
           }
+	 
+          if (etqFlag[x->o1->val]) {
+            printf("Etq already used;.\n");
+            closeASA(x);
+            return NULL;
+          }
+          etqFlag[x->o1->val]++;
+
           int r = setjmp(env);
           if (r != 0) {
             closeASA(x);
@@ -936,6 +947,10 @@ typedef signed char code;
 code object[1000], *here = object;
 code *continueno[1000], **topcontinueno = continueno;
 code *breakno[1000], **topbreakno = breakno;
+
+
+code *etqno[26];
+
 
 void gen(code c) { 
   *here++ = c;
@@ -1023,7 +1038,12 @@ void c(node *x)
     case PRINT : c(x->o1);
                 gi(IPRINT); break;
     
-    case GOTOID  : gi(GOTO); fix(here++, &object[x->o1->val]); 
+    case GOTOID  : gi(GOTO);
+      if(etqFlag[x->o1->val]){
+	fix(here++, etqno[x->o1->val]);
+      }else{
+	/* faire dequoi dautre si l'etq existe pas deja*/
+      }
                    free(x->o1); break;
     
     case CONTINUE_NOID  : gi(GOTO); 
@@ -1050,10 +1070,18 @@ void c(node *x)
                      c(x->o3); fix(p2,here); break;
                    }
 
-      case ETQ   : gi(BIPUSH); g((int) (here-object)+2);
-                   gi(ISTORE); g(x->o1->val);
-            		   c(x->o2); 
-            		   free(x->o1); break;
+    case ETQ   :
+      if(pendingGoto[x->o1->val][0] !=NULL){
+	int i=0;
+	while(pendingGoto[x->o1->val][i] != NULL){
+	  
+          fix(pendingGoto[x->o1->val][i], here);
+	}
+      }else{
+      etqno[x->o1->val] = here;
+		   c(x->o2);
+      }
+       		   free(x->o1); break;
                    
       case WHILE : { code **begin = topcontinueno;
                      code **beginBreak = topbreakno;
@@ -1137,6 +1165,8 @@ void run()
 int main()
 {
   int i;
+  
+  for(i=0;i<26;i++) etqFlag[i]=0;
 
   c(program());
   
