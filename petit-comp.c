@@ -7,7 +7,6 @@
 #include <strings.h>
 #include <setjmp.h>
 
-#define SHOW_CODE 1
 /*---------------------------------------------------------------------------*/
 
 /* Analyseur lexical. */
@@ -24,7 +23,7 @@ int ch = ' ';
 int sym;
 int int_val;
 char id_name[100];
-
+char label[26];
 void next_ch() { ch = getchar(); }
 
 void next_sym()
@@ -96,7 +95,7 @@ void next_sym()
       
             while ((ch >= 'a' && ch <= 'z') || ch == '_')
               {
-                if (i < 0) {
+                if (i >= 100) {
                   printf("Too Long String.\n");
                   longjmp(env, 1);
                 }
@@ -120,7 +119,7 @@ void next_sym()
               }
           }
         else {
-          printf("Invalid Character.\n");
+          printf("Invalid Character : \"%c\".\n", ch);
           longjmp(env, 1);
         }
     }
@@ -133,9 +132,7 @@ void next_sym()
 enum { VAR, CST, ADD, SUB, MULT, DIV, MOD, LT, LEQ, ASSIGN, PRINT, GOTOID,
        IF1, IF2, WHILE, ETQ, DO, EMPTY, SEQ, EXPR, PROG, NEQ, DOUBLE_EQ, GREATER,
        GEQ, CONTINUE_ID, CONTINUE_NOID, BREAK_ID, BREAK_NOID };
-char etqFlag[26]; /* met a true si la lettre est utilisee comme etq */
 
-  
 struct node
   {
     int kind;
@@ -167,6 +164,9 @@ node *new_node(int k)
   node *x = malloc(sizeof(node));
   if (x != NULL) {
     x->kind = k;
+  }
+  else {
+    printf("Memory overflow.\n");
   }
   return x;
 }
@@ -794,7 +794,7 @@ node *statement()
           x->kind = CONTINUE_ID;
           
           x->o1 = term();
-          if (x->o2 == NULL) {
+          if (x->o1 == NULL) {
             closeASA(x);
             return NULL;
           }
@@ -830,7 +830,7 @@ node *statement()
           x->kind = BREAK_ID;
           
           x->o1 = term();
-          if (x->o2 == NULL) {
+          if (x->o1 == NULL) {
             closeASA(x);
             return NULL;
           }
@@ -856,19 +856,19 @@ node *statement()
         x = new_node(ETQ);
         if (x != NULL) {
           x->o1 = term();
-	  
-          if (x->o1 == NULL) {
+          if (x->o1 == NULL || x->o1->kind != VAR) {
             closeASA(x);
             return NULL;
           }
-	 
-          if (etqFlag[x->o1->val]) {
-            printf("Etq already used;.\n");
+          if (label[x->o1->val]) {
             closeASA(x);
+            printf("Label already used.\n");
             return NULL;
           }
-          etqFlag[x->o1->val]++;
-
+          else {
+            label[x->o1->val] = 1;
+          }
+          
           int r = setjmp(env);
           if (r != 0) {
             closeASA(x);
@@ -926,7 +926,7 @@ node *program()  /* <program> ::= <stat> */
   next_sym();
   x->o1 = statement();
   if (sym != EOI || x->o1 == NULL)  {
-    if (x->o1 != NULL) {
+    if (sym != EOI) {
       printf("Too many statement without brakets.\n");
     }
     closeASA(x);
@@ -945,12 +945,24 @@ enum { ILOAD, ISTORE, BIPUSH, DUP, POP, IADD, ISUB, IMULT, IDIV,
 typedef signed char code;
 
 code object[1000], *here = object;
+
 code *continueno[1000], **topcontinueno = continueno;
 code *breakno[1000], **topbreakno = breakno;
 
+code *gotoPosition[1000], **topGotoPosition = gotoPosition;
+int gotoLabel[1000], *topGotoLabel = gotoLabel;
 
-code *etqno[26];
+code *contPosition[1000], **topContPosition = contPosition;
+int contLabel[1000], *topContLabel = contLabel;
 
+code *breakPosition[1000], **topBreakPosition = breakPosition;
+int breakLabel[1000], *topBreakLabel = breakLabel;
+
+int labelsCourant[26];
+code *labelPos[26];
+int labelPending = -1;
+code *labelContinuePos[26];
+code *labelBreakPos[26];
 
 void gen(code c) { 
   *here++ = c;
@@ -984,6 +996,21 @@ void fixContinueNoId(code **start, code *to) {
       fix(*--topcontinueno, to);
   }
 }
+
+void validateGoto(int l) {
+  if (l >= 26 || l < 0 || !label[l]) {
+    printf("Invalid goto in code : the label is not set.\n");
+    longjmp(env, 1);
+  }
+}
+
+void validateCB(int l) {
+  if (l >= 26 || l < 0 || !labelsCourant[l]) {
+    printf("Invalid continue or break in code : the label is not set or is not an outside loop.\n");
+    longjmp(env, 1);
+  }
+}
+    
 /* fix les jump de continue entre topcontinueno et start vers to*/
 void fixBreakNoId(code **start, code *to) {
   while(start - (code**)&breakno <
@@ -1038,24 +1065,26 @@ void c(node *x)
     case PRINT : c(x->o1);
                 gi(IPRINT); break;
     
-    case GOTOID  : gi(GOTO);
-
-      if(etqFlag[x->o1->val]){
-	fix(here++, etqno[x->o1->val]);
-      }else{
-	/*  LE CAS OU L'ETQ EXISTE PAS DEJA*/
-      }
-                   free(x->o1); break;
+    case GOTOID  : validateGoto(x->o1->val); 
+                   gi(GOTO); *topGotoPosition++ = here++;
+                   *topGotoLabel++ = x->o1->val; break;
     
     case CONTINUE_NOID  : gi(GOTO); 
                           *topcontinueno++ = here++; break;
+    
     case BREAK_NOID  : gi(GOTO); 
                           *topbreakno++ = here++; break;
+    
+    case CONTINUE_ID  : validateCB(x->o1->val); 
+                        gi(GOTO); *topContPosition++ = here++;
+                        *topContLabel++ = x->o1->val; break;
+    case BREAK_ID  : validateCB(x->o1->val); 
+                     gi(GOTO); *topBreakPosition++ = here++;
+                     *topBreakLabel++ = x->o1->val; break;
 
       case ASSIGN: c(x->o2);
                    gi(DUP);
-                   gi(ISTORE); g(x->o1->val); 
-                   free(x->o1); break;
+                   gi(ISTORE); g(x->o1->val); break;
 
       case IF1   : { code *p1;
                      c(x->o1);
@@ -1071,13 +1100,19 @@ void c(node *x)
                      c(x->o3); fix(p2,here); break;
                    }
 
-    case ETQ   :
-      /*c"est le cas ou ya pas de goto vers lavant vers le label */
-      etqno[x->o1->val] = here;
-      c(x->o2);
-      free(x->o1); break;
-                 
-      case WHILE : { code **begin = topcontinueno;
+      case ETQ   : labelPos[x->o1->val] = here;
+                   labelPending = x->o1->val;
+            		   c(x->o2);
+            		   labelPending = -1; break;
+                   
+      case WHILE : { int nom = -1;
+                     if (labelPending > -1) {
+                        nom = labelPending;
+                        labelsCourant[nom] = 1;
+                        labelPending = -1;
+                     }
+                     
+                     code **begin = topcontinueno;
                      code **beginBreak = topbreakno;
                      code *p1 = here, *p2;
                      c(x->o1);
@@ -1085,16 +1120,39 @@ void c(node *x)
                      c(x->o2);
                      fixContinueNoId(begin, p1);
                      gi(GOTO); fix(here++,p1); fix(p2,here);
-                     fixBreakNoId(beginBreak, here); break;
+                     fixBreakNoId(beginBreak, here);
+                     
+                     if (nom > -1) {
+                        labelContinuePos[nom] = p1;
+                        labelBreakPos[nom] = here;
+                        labelsCourant[nom] = 0;
+                     }
+                     
+                     break;
                    }
 
-      case DO    : { code **begin = topcontinueno;
+      case DO    : { int nom = -1;
+                     if (labelPending > -1) {
+                        nom = labelPending;
+                        labelsCourant[nom] = 1;
+                        labelPending = -1;
+                     }
+                     
+                     code **begin = topcontinueno;
                      code **beginBreak = topbreakno; 
                      code *p1 = here; c(x->o1);
                      fixContinueNoId(begin, here);
                      c(x->o2);
                      gi(IFNE); fix(here++,p1); 
-                     fixBreakNoId(beginBreak, here); break;
+                     fixBreakNoId(beginBreak, here); 
+                     
+                     if (nom > -1) {
+                        labelContinuePos[nom] = p1;
+                        labelBreakPos[nom] = here;
+                        labelsCourant[nom] = 0;
+                     }
+                     
+                     break;
                    }
 
       case EMPTY : break;
@@ -1107,9 +1165,6 @@ void c(node *x)
 
       case PROG  : c(x->o1);
                    gi(RETURN); break;
-    }
-    if (x != NULL) {
-      free(x);
     }
     
 }
@@ -1135,7 +1190,8 @@ void run()
         case IADD  : sp[-2] = sp[-2] + sp[-1]; --sp;     break;
         case ISUB  : sp[-2] = sp[-2] - sp[-1]; --sp;     break;
         case IMULT : sp[-2] = sp[-2] * sp[-1]; --sp;     break;
-        case IDIV : sp[-2] = sp[-2] / sp[-1]; --sp;      break;
+        case IDIV : { if (sp[-1] == 0) { printf("Invalid divsion by zero.\n"); exit(1);}
+                      sp[-2] = sp[-2] / sp[-1]; --sp;      break;}
         case IMOD : sp[-2] = sp[-2] % sp[-1]; --sp;      break;
         case GOTO  : pc += *pc;                          break;
         case IFEQ  : if (*--sp==0) pc += *pc; else pc++; break;
@@ -1160,12 +1216,27 @@ int main()
 {
   int i;
   
-  for(i=0;i<26;i++) etqFlag[i]=0;
+  for (i=0; i<26; i++) {
+    label[i] = 0;
+    labelsCourant[i] = 0;
+  }
 
-  c(program());
-  /* il faut faire de quoi si ilreste des goto vers l'avant qui
-not jamais ete ferme parce que l'etq est pas presente dans le code
-*/
+  node *prog = program();
+  c(prog);
+  closeASA(prog);
+  
+  while(topGotoPosition - (code**)&gotoPosition > 0) {
+    fix(*--topGotoPosition, labelPos[*--topGotoLabel]);
+  }
+  
+  while(topContPosition - (code**)&contPosition > 0) {
+    fix(*--topContPosition, labelPos[*--topContLabel]);
+  }
+  
+  while(topBreakPosition - (code**)&breakPosition > 0) {
+    fix(*--topBreakPosition, labelPos[*--topBreakLabel]);
+  }
+  
   if (topcontinueno - (code**)&continueno > 0) {
     printf("Invalid continue not in a loop.\n");
     exit(1);
