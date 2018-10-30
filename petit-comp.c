@@ -1039,10 +1039,11 @@ void c(node *x)
                 gi(IPRINT); break;
     
     case GOTOID  : gi(GOTO);
+
       if(etqFlag[x->o1->val]){
 	fix(here++, etqno[x->o1->val]);
       }else{
-	/* faire dequoi dautre si l'etq existe pas deja*/
+	/*  LE CAS OU L'ETQ EXISTE PAS DEJA*/
       }
                    free(x->o1); break;
     
@@ -1071,18 +1072,11 @@ void c(node *x)
                    }
 
     case ETQ   :
-      if(pendingGoto[x->o1->val][0] !=NULL){
-	int i=0;
-	while(pendingGoto[x->o1->val][i] != NULL){
-	  
-          fix(pendingGoto[x->o1->val][i], here);
-	}
-      }else{
+      /*c"est le cas ou ya pas de goto vers lavant vers le label */
       etqno[x->o1->val] = here;
-		   c(x->o2);
-      }
-       		   free(x->o1); break;
-                   
+      c(x->o2);
+      free(x->o1); break;
+                 
       case WHILE : { code **begin = topcontinueno;
                      code **beginBreak = topbreakno;
                      code *p1 = here, *p2;
@@ -1169,7 +1163,9 @@ int main()
   for(i=0;i<26;i++) etqFlag[i]=0;
 
   c(program());
-  
+  /* il faut faire de quoi si ilreste des goto vers l'avant qui
+not jamais ete ferme parce que l'etq est pas presente dans le code
+*/
   if (topcontinueno - (code**)&continueno > 0) {
     printf("Invalid continue not in a loop.\n");
     exit(1);
