@@ -159,17 +159,13 @@ typedef struct node node;
 
 void closeASA(node *x) {
   if (x != NULL) {
-    printf("kind : %d\n", x->kind);
-    printf("t\n");
     if(x->o1 != NULL) {
       closeASA(x->o1);
     } 
     if(x->o2 != NULL) {
-      printf("kind o2: %d\n", x->o2->kind);
       closeASA(x->o2);
     } 
     if(x->o3 != NULL) {
-      printf("kind o3: %d\n", x->o3->kind);
       closeASA(x->o3);
     }
     free(x);
@@ -179,7 +175,6 @@ void closeASA(node *x) {
 node *new_node(int k)
 { 
   node *x = malloc(sizeof(node));
-  printf("creation : %d \n", k);
   if (x != NULL) {
     x->kind = k;
   } 
