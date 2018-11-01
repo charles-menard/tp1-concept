@@ -1,5 +1,5 @@
 /* fichier: "petit-comp.c" */
-
+/* Auteurs : Charles Menard et Tanahel Huot-Roberge*/
 /* Un petit compilateur et machine virtuelle pour un sous-ensemble de C.  */
 
 #include <stdio.h>
@@ -46,17 +46,20 @@ void next_sym()
       default:
         if (ch >= '0' && ch <= '9')
           {
-            int_val = 0; /* overflow? */
+            int_val = 0;
       
             while (ch >= '0' && ch <= '9')
               {
                 int_val = int_val*10 + (ch - '0');
                 next_ch();
-                if (int_val > 127) {
-                  printf("Too big Integer.\n");
+                
+                /* S'assure que le nombre positif entre entre dans un signed char*/
+                if (int_val > 127) { 
+                  printf("Too big Int entered : it will not fit in a signed char.\n");
                   erreur = 1;
                   break;
                 }
+              
               }
       
             sym = INT;
@@ -94,8 +97,8 @@ void next_sym()
 
 	        }
 	        else {
-	          printf("Invalid symbole.\n");
-	          sym = -1;
+	          printf("Invalid Character : \"!\".\n");
+            sym = -1;
             erreur = 1;
 	        }
 	      }
@@ -105,7 +108,7 @@ void next_sym()
       
             while ((ch >= 'a' && ch <= 'z') || ch == '_')
               {
-                if (i < 0) {
+                if (i >= 100) {
                   printf("Too Long String.\n");
                   erreur = 1;
                   break;
@@ -131,7 +134,7 @@ void next_sym()
               }
           }
         else {
-          printf("Invalid Character : \"%c.\"\n", ch);
+          printf("Invalid Character : \"%c\".\n", ch);
           sym = -1;
           erreur = 1;
         }
@@ -157,6 +160,8 @@ struct node
 
 typedef struct node node;
 
+/* Fonction recursive qui libere l'espace prise par le sous arbre
+   de syntaxe abstraite avec node *x comme racine. */
 void closeASA(node *x) {
   if (x != NULL) {
     if(x->o1 != NULL) {
@@ -179,7 +184,7 @@ node *new_node(int k)
     x->kind = k;
   } 
   else {
-    printf("Not enough space.\n"); 
+    printf("Not enough space to store the ASA.\n"); 
     erreur = 1;
   }
   return x;
@@ -205,7 +210,6 @@ node *term() /* <term> ::= <id> | <int> | <paren_expr> */
     {
       x = new_node(CST);
       if (x != NULL) {
-      
         x->val = int_val;
         next_sym();
         
@@ -220,7 +224,7 @@ node *term() /* <term> ::= <id> | <int> | <paren_expr> */
   return x;
 }
 
-node *mult() /* <mult> ::= <term>|<mult>"*"<term> */
+node *mult() /* <mult> ::= <term>|<mult>"*"<term> | <mult>"/"<term> | <mult>"%"<term>*/
 {
   node *x = term();
   if (x != NULL) {
@@ -244,6 +248,12 @@ node *mult() /* <mult> ::= <term>|<mult>"*"<term> */
         next_sym();
         x->o1 = t;
         x->o2 = term();
+        if(x->o2 == NULL) {
+          printf("Missing an operand in multiplication, division or modulo.\n");
+          erreur = 1;
+          break;
+        }
+      
       }
       else {
         erreur = 1;
@@ -269,8 +279,13 @@ node *sum() /* <sum> ::= <mult>|<sum>"+"<mult>|<sum>"-"<mult> */
       
         x->o1 = t;
         next_sym();
+        
         x->o2 = mult();
-      
+        if(x->o2 == NULL) {
+          printf("Missing an operand in addition or substraction.\n");
+          erreur = 1;
+          break;
+        }
       }
       else {
         erreur = 1;
@@ -284,12 +299,16 @@ node *sum() /* <sum> ::= <mult>|<sum>"+"<mult>|<sum>"-"<mult> */
   return x;
 }
 
-node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
+node *test() /* <test> ::= <sum> | <sum> "<" <sum> | <sum> "<=" <sum> | <sum> ">" <sum>
+                | <sum> ">" <sum> | <sum> ">=" <sum> | <sum> "==" <sum> | <sum> "!=" <sum>*/
 {
   node *x = sum();
   if (x != NULL) {
-    if (sym == LESS)
-    {
+    
+    char isTest = 0;
+    
+    if (sym == LESS) { 
+      isTest = 1;
       node *t = x;
       x = new_node(LT);
       if (x != NULL) {
@@ -306,6 +325,7 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
       
     }
     else if (sym == LESS_EQ) {
+      isTest = 1;
       node *t = x;
       x = new_node(LEQ);
       if (x != NULL) {
@@ -322,6 +342,7 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
       
     }
     else if(sym == NOT_EQ){
+      isTest = 1;
       node *t = x;
       x = new_node(NEQ);
       if (x != NULL) {
@@ -338,7 +359,7 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
 
     }
     else if(sym == DOUBLE_EQUAL){
-
+      isTest = 1;
       node *t = x;
       x = new_node(DOUBLE_EQ);
       if (x != NULL) {
@@ -355,7 +376,7 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
 
     }
     else if (sym == MORE){
-      
+      isTest = 1;
       node *t = x;
       x = new_node(GREATER);
       if (x != NULL) {
@@ -372,7 +393,7 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
 
     }
     else if (sym == MORE_EQUAL){
-      
+      isTest = 1;
       node *t = x;
       x = new_node(GEQ);
       if (x != NULL) {
@@ -387,6 +408,10 @@ node *test() /* <test> ::= <sum> | <sum> "<" <sum> */
         x = t;
       }
       
+    }
+    if(isTest && x->o2 == NULL) {
+      printf("Missing an operand in test.\n");
+      erreur = 1;
     }
   }
 
@@ -408,6 +433,10 @@ node *expr() /* <expr> ::= <test> | <id> "=" <expr> */
         x->o1 = t;
         next_sym();
         x->o2 = expr();
+        if(x->o2 == NULL) {
+          printf("Missing an operand in assignation.\n");
+          erreur = 1;
+        }
       }
       else {
         erreur = 1;
@@ -434,18 +463,15 @@ node *paren_expr() /* <paren_expr> ::= "(" <expr> ")" */
 
   x = expr();
   
-  if (x != NULL){
+  if (x == NULL){
+    erreur = 1;
+  }
     
-    if (sym == RPAR){
-      next_sym(); 
-    }
-    else {
-      printf("Missing closing parenthese in parenthese expression.\n");
-      erreur = 1;
-    }
-    
+  if (sym == RPAR){
+    next_sym(); 
   }
   else {
+    printf("Missing closing parenthese in parenthese expression.\n");
     erreur = 1;
   }
   return x;
@@ -479,7 +505,6 @@ node *statement()
     {
       x = new_node(WHILE);
       if (x != NULL) {
-        
         next_sym();
         x->o1 = paren_expr();
         x->o2 = statement();
@@ -493,14 +518,13 @@ node *statement()
     {
       x = new_node(DO);
       if (x != NULL) {
-        
         next_sym();
         x->o1 = statement();
         
         if (sym == WHILE_SYM) {
           next_sym();
-          
           x->o2 = paren_expr();
+          
           if (sym == SEMI) {
             next_sym();
           }
@@ -508,6 +532,7 @@ node *statement()
             printf("Missing semi-colon in do while.\n");
             erreur = 1;
           }
+          
         }
         else {
           printf("Missing while in do while.\n");
@@ -541,14 +566,12 @@ node *statement()
       x = new_node(GOTOID);
       if (x != NULL) {
         next_sym();
-        if (sym == ID)           /* <term> ::= <id> */
-        {
+        
+        if (sym == ID) {
           x->o1 = new_node(VAR);
           if (x->o1 != NULL) {
-            
             x->o1->val = id_name[0]-'a';
-            next_sym();
-             
+            next_sym(); 
           }
         } 
         else {
@@ -661,8 +684,10 @@ node *statement()
         erreur = 1;
       }
     }
-  else                     /* <expr> ";" */
-    {
+  else                     /* <expr> ";"  ou <ID> ":"*/
+    { 
+      while (ch == ' ') next_ch();
+      
       if (sym == ID && ch == ':') {
         x = new_node(ETQ);
         if (x != NULL) {
@@ -685,6 +710,7 @@ node *statement()
           erreur = 1;
         }
       }
+      
       else {
         x = new_node(EXPR);
         if (x != NULL) {
@@ -717,7 +743,7 @@ node *program()  /* <program> ::= <stat> */
     exit(1);
   }
   if (sym != EOI) {
-    printf("Too many statement without brakets.\n");
+    printf("Too many statement without brakets or too many closing brakets.\n");
     closeASA(x);
     exit(1);
   }
@@ -735,22 +761,44 @@ typedef signed char code;
 
 code object[1000], *here = object;
 
+/* Stack de continue vue dans le code sans id. */
 code *continueno[1000], **topcontinueno = continueno;
+/* Stack de break vue dans le code sans id. */
 code *breakno[1000], **topbreakno = breakno;
 
+/* Liste de goto vue dans le code avec une liste de leurs
+    labels respectifs*/
 code *gotoPosition[1000], **topGotoPosition = gotoPosition;
 int gotoLabel[1000], *topGotoLabel = gotoLabel;
 
+/* Liste de continue avec id vue dans le code
+    avec une liste de leurs labels respectifs*/
 code *contPosition[1000], **topContPosition = contPosition;
 int contLabel[1000], *topContLabel = contLabel;
 
+/* Liste de break avec id vue dans le code
+    avec une liste de leurs labels respectifs*/
 code *breakPosition[1000], **topBreakPosition = breakPosition;
 int breakLabel[1000], *topBreakLabel = breakLabel;
 
+/* Liste de label qui pointe vers une boucle
+    englobante*/
 int labelsCourant[26];
+
+/* Position dans object ou il y a un label cette position 
+     represente vers ou un goto vers ce label doit aller. */
 code *labelPos[26];
+
+/*Valeur qui pointe vers la boucle 
+   et de valeur -1 s'il n'y en a pas. */
 int labelPending = -1;
+
+/* Position dans object ou il y a un label cette position
+    represente vers ou un continue vers ce label doit aller. */
 code *labelContinuePos[26];
+
+/* Position dans object ou il y a un label cette position
+    represente vers ou un break vers ce label doit aller. */
 code *labelBreakPos[26];
 
 void gen(code c) { 
@@ -768,6 +816,7 @@ void gen(code c) {
 #define g(c) gen(c)
 #define gi(c) gen(c)
 #endif
+
 void fix(code *src, code *dst) { 
   if (dst-src < -128 || dst-src > 127) {
     printf("Invalid jump in code : the jump is too long.\n");
@@ -776,7 +825,7 @@ void fix(code *src, code *dst) {
   *src = dst-src;
 }
 
-/* fix les jump de continue entre topcontinueno et start vers to*/
+/* Fix les jump de continue entre topcontinueno et start vers to. */
 void fixContinueNoId(code **start, code *to) {
   while(start - (code**)&continueno <
         topcontinueno - (code**)&continueno) {
@@ -784,13 +833,14 @@ void fixContinueNoId(code **start, code *to) {
   }
 }
 
+/* Valide si un goto va vers un label qui est dans le programmme. */
 void validateGoto(int l) {
   if (l >= 26 || l < 0 || !label[l]) {
     printf("Invalid goto in code : the label is not set.\n");
     longjmp(env, 1);
   }
 }
-
+/* Valide si un continue ou un break va vers un label qui est correspont a une boucle englobante. */
 void validateCB(int l) {
   if (l >= 26 || l < 0 || !labelsCourant[l]) {
     printf("Invalid continue or break in code : the label is not set or is not an outside loop.\n");
@@ -798,7 +848,7 @@ void validateCB(int l) {
   }
 }
     
-/* fix les jump de continue entre topcontinueno et start vers to*/
+/* Fix les jump de continue entre topcontinueno et start vers to. */
 void fixBreakNoId(code **start, code *to) {
   while(start - (code**)&breakno <
         topbreakno - (code**)&breakno) {
@@ -843,84 +893,91 @@ void c(node *x)
                 gi(BIPUSH); g(0); break;
                 
     case NEQ : gi(BIPUSH); g(0);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFEQ); g(4);
-      gi(POP);
-      gi(BIPUSH); g(1); break;
+              c(x->o1);
+              c(x->o2);
+              gi(ISUB);
+              gi(IFEQ); g(4);
+              gi(POP);
+              gi(BIPUSH); g(1); break;
+              
     case DOUBLE_EQ: gi(BIPUSH); g(1);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFEQ); g(4);
-      gi(POP);
-      gi(BIPUSH); g(0); break;
+              c(x->o1);
+              c(x->o2);
+              gi(ISUB);
+              gi(IFEQ); g(4);
+              gi(POP);
+              gi(BIPUSH); g(0); break;
       
     case GREATER : gi(BIPUSH); g(0);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFLE); g(4);
-      gi(POP);
-      gi(BIPUSH); g(1); break;
+              c(x->o1);
+              c(x->o2);
+              gi(ISUB);
+              gi(IFLE); g(4);
+              gi(POP);
+              gi(BIPUSH); g(1); break;
       
     case GEQ :  gi(BIPUSH); g(0);
-      c(x->o1);
-      c(x->o2);
-      gi(ISUB);
-      gi(IFLT); g(4);
-      gi(POP);
-      gi(BIPUSH); g(1); break;
+              c(x->o1);
+              c(x->o2);
+              gi(ISUB);
+              gi(IFLT); g(4);
+              gi(POP);
+              gi(BIPUSH); g(1); break;
       
     case PRINT : c(x->o1);
-                gi(IPRINT); break;
+              gi(IPRINT); break;
     
     case GOTOID  : validateGoto(x->o1->val); 
-                   gi(GOTO); *topGotoPosition++ = here++;
-                   *topGotoLabel++ = x->o1->val; break;
+              gi(GOTO); *topGotoPosition++ = here++;
+              *topGotoLabel++ = x->o1->val; break;
     
     case CONTINUE_NOID  : gi(GOTO); 
-                          *topcontinueno++ = here++; break;
+              *topcontinueno++ = here++; break;
     
     case BREAK_NOID  : gi(GOTO); 
-                          *topbreakno++ = here++; break;
+              *topbreakno++ = here++; break;
     
     case CONTINUE_ID  : validateCB(x->o1->val); 
-                        gi(GOTO); *topContPosition++ = here++;
-                        *topContLabel++ = x->o1->val; break;
+              gi(GOTO); *topContPosition++ = here++;
+              *topContLabel++ = x->o1->val; break;
+              
     case BREAK_ID  : validateCB(x->o1->val); 
-                     gi(GOTO); *topBreakPosition++ = here++;
-                     *topBreakLabel++ = x->o1->val; break;
+              gi(GOTO); *topBreakPosition++ = here++;
+              *topBreakLabel++ = x->o1->val; break;
 
-      case ASSIGN: c(x->o2);
-                   gi(DUP);
-                   gi(ISTORE); g(x->o1->val); break;
+    case ASSIGN: c(x->o2);
+              gi(DUP);
+              gi(ISTORE); g(x->o1->val); break;
 
-      case IF1   : { code *p1; labelPending = -1;
+      case IF1   : { code *p1; labelPending = -1; /* Consome le labelPendind.*/
                      c(x->o1);
                      gi(IFEQ); p1 = here++;
                      c(x->o2); fix(p1,here); break;
                    }
 
-      case IF2   : { code *p1, *p2; labelPending = -1;
+      case IF2   : { code *p1, *p2; labelPending = -1; /* Consome le labelPendind.*/
                      c(x->o1);
                      gi(IFEQ); p1 = here++;
                      c(x->o2);
                      gi(GOTO); p2 = here++; fix(p1,here);
                      c(x->o3); fix(p2,here); break;
                    }
-
-      case ETQ   : labelPos[x->o1->val] = here;
+                   
+                   /* Enregistre la position pour le goto et 
+                      dit qu'il y a un label a setter 
+                      si on rentre dans une boucle après*/
+      case ETQ   : labelPos[x->o1->val] = here; 
                    labelPending = x->o1->val;
             		   c(x->o2);
-            		   labelPending = -1; break;
+            		   labelPending = -1; break; /* Consome le labelPendind.*/
                    
-      case WHILE : { int nom = -1;
+      case WHILE : { /* Sauvegarde le label qui pointe vers la boucle dans nom
+                        s'il y en a un et update les labels courants. */
+                     int nom = -1;
                      if (labelPending > -1) {
                         nom = labelPending;
                         labelsCourant[nom] = 1;
-                        labelPending = -1;
+                        labelPending = -1;  /* Consome le labelPendind.*/
                      }
                      
                      code **begin = topcontinueno;
@@ -933,6 +990,8 @@ void c(node *x)
                      gi(GOTO); fix(here++,p1); fix(p2,here);
                      fixBreakNoId(beginBreak, here);
                      
+                     /* Enregistre la bonne position pour le continue et le break 
+                        vers le nom de la boucle et update la listes de labels courants. */
                      if (nom > -1) {
                         labelContinuePos[nom] = p1;
                         labelBreakPos[nom] = here;
@@ -942,11 +1001,13 @@ void c(node *x)
                      break;
                    }
 
-      case DO    : { int nom = -1;
+      case DO    : { /* Sauvegarde le label qui pointe vers la boucle dans nom
+                        s'il y en a un et update les labels courants*/
+                     int nom = -1;
                      if (labelPending > -1) {
                         nom = labelPending;
                         labelsCourant[nom] = 1;
-                        labelPending = -1;
+                        labelPending = -1;  /* Consome le labelPendind.*/
                      }
                      
                      code **begin = topcontinueno;
@@ -957,6 +1018,8 @@ void c(node *x)
                      gi(IFNE); fix(here++,p1); 
                      fixBreakNoId(beginBreak, here); 
                      
+                     /* Enregistre la bonne position pour le continue et le break 
+                        vers le nom de la boucle et update la listes de labels courants. */
                      if (nom > -1) {
                         labelContinuePos[nom] = p1;
                         labelBreakPos[nom] = here;
@@ -968,7 +1031,8 @@ void c(node *x)
 
       case EMPTY : break;
 
-      case SEQ   : labelPending = -1; c(x->o1);
+      case SEQ   : labelPending = -1; /* Consome le labelPendind.*/ 
+                   c(x->o1);
                    c(x->o2); break;
 
       case EXPR  : c(x->o1);
@@ -986,6 +1050,8 @@ void c(node *x)
 
 int globals[26];
 
+/* Valide qu'il n'y a pas de overflow dans une addition 
+    0 s'il y en a et 1 s'il n'y en a pas*/
 char validateADD(int g, int d) {
   if ((g > 0 && d > 0 && g+d<0) || (g < 0 && d < 0 && g+d>0)) {
     return 0;
@@ -993,16 +1059,19 @@ char validateADD(int g, int d) {
   return 1;
 }
 
+/* Valide qu'il n'y a pas de overflow dans une soustraction 
+    0 s'il y en a et 1 s'il n'y en a pas*/
 char validateSUB(int g, int d) {
-  if ((g < 0 && d > 0 && g-d>0) || (g > 0 && d < 0 && g-d<0)) {
+  if ((g < 0 && d > 0 && g-d>0) || (g >= 0 && d < 0 && g-d<0)) {
     return 0;
   }
   return 1;
 }
-
+/* Valide qu'il n'y a pas de overflow dans une multiplication 
+    0 s'il y en a et 1 s'il n'y en a pas*/
 char validateMULT(int g, int d) {
-  if ((((g > 0 && d > 0) || (g < 0 && d < 0)) && g*d<0) 
-  || (((g < 0 && d > 0) || (g > 0 && d < 0)) && g*d>0)) {
+  if ((((g > 0 && d > 0) || (g < 0 && d < 0)) && g*d<=0) 
+  || (((g < 0 && d > 0) || (g > 0 && d < 0)) && g*d>=0)) {
     return 0;
   }
   return 1;
@@ -1026,7 +1095,7 @@ void run()
 	                   }
          	           sp[-2] = sp[-2] + sp[-1]; --sp;     break;
 		   
-      case ISUB  : if(!validateSUB(sp[-2], sp[-1])){
+        case ISUB  : if(!validateSUB(sp[-2], sp[-1])){
 	                    printf("Overflow in substraction.\n"); exit(1);
 	                 }
          	         sp[-2] = sp[-2] - sp[-1]; --sp;       break;
@@ -1060,6 +1129,8 @@ void run()
 /*---------------------------------------------------------------------------*/
 
 /* Programme principal. */
+
+/* Meme methode que fix mais ne ferme pas ASA si le jump est trop long*/
 void fixPos(code *src, code *dst) { 
   if (dst-src < -128 || dst-src > 127) {
     printf("Invalid jump in code : the jump is too long.\n");
@@ -1088,18 +1159,23 @@ int main()
   c(prog);
   closeASA(prog);
   
+  /* Redirige les goto dans la liste vers la bonne position*/
   while(topGotoPosition - (code**)&gotoPosition > 0) {
     fixPos(*--topGotoPosition, labelPos[*--topGotoLabel]);
   }
   
+  /* Redirige les continue avec id dans la liste vers la bonne position*/
   while(topContPosition - (code**)&contPosition > 0) {
     fixPos(*--topContPosition, labelContinuePos[*--topContLabel]);
   }
   
+  /* Redirige les break avec id dans la liste vers la bonne position*/
   while(topBreakPosition - (code**)&breakPosition > 0) {
     fixPos(*--topBreakPosition, labelBreakPos[*--topBreakLabel]);
   }
   
+  /* S'il reste des continue ou break sans id
+      dans leur pile c'est qu'ils sont pas dans des loop*/
   if (topcontinueno - (code**)&continueno > 0) {
     printf("Invalid continue not in a loop.\n");
     exit(1);
